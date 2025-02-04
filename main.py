@@ -7,7 +7,14 @@ import numpy as np
 import pyautogui
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtGui import QFont, QImage, QPixmap
-from PyQt5.QtWidgets import QApplication, QLabel, QMainWindow, QVBoxLayout, QWidget
+from PyQt5.QtWidgets import (
+    QApplication,
+    QLabel,
+    QMainWindow,
+    QVBoxLayout,
+    QWidget,
+    QSizePolicy,
+)
 
 
 class MarioControllerThread(QThread):
@@ -42,8 +49,9 @@ class MarioControllerThread(QThread):
         self.drawing_utils = mp.solutions.drawing_utils
 
         self.cap = cv2.VideoCapture(0)
-        # self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)  # Set desired width
-        # self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 360)  # Set desired height
+        # Uncomment and set desired resolution if needed:
+        # self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        # self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 360)
 
         self.current_gesture = "None"
         self.calibration_movement_threshold = 50
@@ -97,9 +105,7 @@ class MarioControllerThread(QThread):
             landmark_list[11],
             landmark_list[12],
         ]
-        average_x = sum(landmark.x for landmark in landmarks_to_use) / len(
-            landmarks_to_use
-        )
+        average_x = sum(landmark.x for landmark in landmarks_to_use) / len(landmarks_to_use)
         self.average_x_in_pixels = average_x * frame_width
 
         if self.average_x_in_pixels < frame_width / 2:
@@ -213,36 +219,58 @@ class MarioControllerThread(QThread):
                 2,
             )
 
-            # Emit the frame
+            # Emit the frame and status messages
             self.frame_ready.emit(frame)
-
-            # Emit the current gesture and error messages
-            self.gesture_changed.emit(
-                self.current_gesture if self.current_gesture else "None"
-            )
+            self.gesture_changed.emit(self.current_gesture if self.current_gesture else "None")
             self.error_changed.emit(error_message)
 
         self.cap.release()
 
 
-from PyQt5.QtWidgets import QMainWindow
+class VideoLabel(QLabel):
+    """
+    A custom QLabel that stores its current QPixmap and re-scales it
+    on resize events so that the image always fits the label.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._pixmap = None
+        # Allow the label to grow or shrink arbitrarily.
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        self.setAlignment(Qt.AlignCenter)
+
+    def setPixmap(self, pixmap):
+        self._pixmap = pixmap
+        if pixmap is not None:
+            scaled_pixmap = pixmap.scaled(
+                self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation
+            )
+            super().setPixmap(scaled_pixmap)
+        else:
+            super().setPixmap(pixmap)
+
+    def resizeEvent(self, event):
+        if self._pixmap:
+            scaled_pixmap = self._pixmap.scaled(
+                self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation
+            )
+            super().setPixmap(scaled_pixmap)
+        super().resizeEvent(event)
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(
-            "Mario Pose Controller - Lines in Frame, Errors & Gestures in UI"
-        )
+        self.setWindowTitle("Mario Pose Controller - Resizable Camera Widget")
         self.resize(1280, 720)
 
         container = QWidget()
         self.setCentralWidget(container)
         layout = QVBoxLayout(container)
 
-        # Camera feed (top)
-        self.video_label = QLabel()
-        self.video_label.setAlignment(Qt.AlignCenter)
+        # Use our custom VideoLabel for the camera feed.
+        self.video_label = VideoLabel()
         layout.addWidget(self.video_label, stretch=2)
 
         # Error message label (middle)
@@ -250,7 +278,6 @@ class MainWindow(QMainWindow):
         font40 = QFont()
         font40.setPointSize(40)
         font40.setBold(True)
-
         self.error_label.setFont(font40)
         self.error_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.error_label, stretch=1)
@@ -269,24 +296,15 @@ class MainWindow(QMainWindow):
         self.controller_thread.start()
 
     def update_frame(self, frame: np.ndarray):
-        # Convert the OpenCV BGR frame to a QPixmap for display
+        # Convert the OpenCV BGR frame to a QPixmap for display.
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         h, w, ch = rgb_frame.shape
         bytes_per_line = ch * w
         qimg = QImage(rgb_frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
         pixmap = QPixmap.fromImage(qimg)
-
-        self.video_label.setPixmap(
-            pixmap.scaled(
-                self.video_label.width(),
-                self.video_label.height(),
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation,
-            )
-        )
+        self.video_label.setPixmap(pixmap)
 
     def update_gesture(self, gesture: str):
-        # If gesture is "None", we can show "Gesture: None" or be empty
         if gesture == "None":
             self.gesture_label.setText("Gesture: None")
         elif gesture == "Stopped":
@@ -301,12 +319,7 @@ class MainWindow(QMainWindow):
             self.gesture_label.setText(f"Gesture: {gesture}")
 
     def update_error(self, msg: str):
-        """Show any error/warning messages above the gesture label."""
-        # If empty message, no error
-        if msg:
-            self.error_label.setText(msg)
-        else:
-            self.error_label.setText("")
+        self.error_label.setText(msg if msg else "")
 
     def closeEvent(self, event):
         self.controller_thread.stop()
@@ -323,3 +336,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
